@@ -52,6 +52,7 @@ contract DappRegistry is IAuthoriser, Storage, Owned {
     function removeRegistry(uint8 _registryId) external onlyOwner {
         require(_registryId > 0, "DR: invalid _registryId");
         require(registryManagers[_registryId] != address(0), "DR: unknown registry");
+        delete registryManagers[_registryId];
         emit RegistryRemoved(_registryId);
     }
 

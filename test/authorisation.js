@@ -20,6 +20,8 @@ const TestContract = artifacts.require("TestContract");
 const Filter = artifacts.require("TestFilter");
 
 const { assert } = require("chai");
+const truffleAssert = require("truffle-assertions");
+
 const utils = require("../utils/utilities.js");
 const { ETH_TOKEN } = require("../utils/utilities.js");
 
@@ -114,7 +116,7 @@ contract("ArgentModule", (accounts) => {
     console.log("Gas to call toggleDappRegistry: ", txReceipt.gasUsed);
   }
 
-  beforeEach(async () => {
+  async function setupWallet() {
     const proxy = await Proxy.new(walletImplementation.address);
     wallet = await BaseWallet.at(proxy.address);
     await wallet.init(owner, [module.address]);
@@ -125,7 +127,7 @@ contract("ArgentModule", (accounts) => {
     await wallet.send(new BN("1000000000000000000"));
 
     await enableCustomRegistry();
-  });
+  }
 
   async function encodeTransaction(to, value, data, isSpenderInData) {
     return { to, value, data, isSpenderInData };
@@ -155,6 +157,7 @@ contract("ArgentModule", (accounts) => {
 
   describe("call (un)authorised contract", () => {
     beforeEach(async () => {
+      await setupWallet();
       initNonce();
     });
 
@@ -251,9 +254,8 @@ contract("ArgentModule", (accounts) => {
 
   describe("approve token and call authorised contract", () => {
     beforeEach(async () => {
+      await setupWallet();
       await initNonce();
-      await authoriser.addAuthorisationToRegistry(0, contract.address, filter.address);
-      await authoriser.addAuthorisationToRegistry(0, recipient, ZERO_ADDRESS);
     });
 
     it("should call authorised contract when filter pass", async () => {
@@ -305,6 +307,92 @@ contract("ArgentModule", (accounts) => {
       const { success, error } = await utils.parseRelayReceipt(txReceipt);
       assert.isFalse(success, "call should have failed");
       assert.equal(error, "TM: call not authorised");
+    });
+  });
+
+  describe("enable/disable registry for wallet", () => {
+    beforeEach(async () => {
+      await setupWallet();
+    });
+    it("should not enable non-existing registry", async () => {
+      const txReceipt = await manager.relay(
+        module,
+        "toggleDappRegistry",
+        [wallet.address, 66, true],
+        wallet,
+        [owner],
+        1,
+        ETH_TOKEN,
+        relayer);
+      const { success, error } = await utils.parseRelayReceipt(txReceipt);
+      assert.isFalse(success, "toggleDappRegistry should have failed");
+      assert.equal(error, "DR: unknow registry");
+    });
+    it("should not enable already-enabled registry", async () => {
+      const txReceipt = await manager.relay(
+        module,
+        "toggleDappRegistry",
+        [wallet.address, CUSTOM_REGISTRY_ID, true],
+        wallet,
+        [owner],
+        1,
+        ETH_TOKEN,
+        relayer);
+      const { success, error } = await utils.parseRelayReceipt(txReceipt);
+      assert.isFalse(success, "toggleDappRegistry should have failed");
+      assert.equal(error, "DR: bad state change");
+    });
+  });
+
+  describe("add/remove registry", () => {
+    it("should remove a registry", async () => {
+      let mgr = await authoriser.registryManagers(CUSTOM_REGISTRY_ID);
+      assert.equal(mgr, registryManager, "wrong manager");
+      await authoriser.removeRegistry(CUSTOM_REGISTRY_ID, { from: infrastructure });
+      mgr = await authoriser.registryManagers(CUSTOM_REGISTRY_ID);
+      assert.equal(mgr, ethers.constants.AddressZero, "removeRegistry() failed");
+      // recreate the custom registry
+      await authoriser.createRegistry(CUSTOM_REGISTRY_ID, registryManager, { from: infrastructure });
+      mgr = await authoriser.registryManagers(CUSTOM_REGISTRY_ID);
+      assert.equal(mgr, registryManager, "recreating the custom registry failed");
+    });
+    it("should not remove the Argent Registry", async () => {
+      await truffleAssert.reverts(
+        authoriser.removeRegistry(0, { from: infrastructure }), "DR: invalid _registryId"
+      );
+    });
+    it("should not remove non-existing registry", async () => {
+      await truffleAssert.reverts(
+        authoriser.removeRegistry(66, { from: infrastructure }), "DR: unknown registry"
+      );
+    });
+    it("should not recreate the Argent registry", async () => {
+      await truffleAssert.reverts(
+        authoriser.createRegistry(0, registryManager, { from: infrastructure }), "DR: invalid parameters"
+      );
+    });
+    it("should not create a duplicate registry", async () => {
+      await truffleAssert.reverts(
+        authoriser.createRegistry(CUSTOM_REGISTRY_ID, registryManager, { from: infrastructure }), "DR: duplicate registry"
+      );
+    });
+  });
+
+  describe("add authorisation to registry", () => {
+    it("should not allow non-owner to add authorisation to the Argent registry", async () => {
+      await truffleAssert.reverts(
+        authoriser.addAuthorisationToRegistry(0, contract.address, filter.address, { from: nonwhitelisted }), "DR: not authorised"
+      );
+    });
+    it("should not add authorisation to non-existing registry", async () => {
+      await truffleAssert.reverts(
+        authoriser.addAuthorisationToRegistry(66, contract.address, filter.address, { from: nonwhitelisted }), "DR: unknow registry"
+      );
+    });
+    it("should not allow non-manager to add authorisation to a registry", async () => {
+      await truffleAssert.reverts(
+        authoriser.addAuthorisationToRegistry(CUSTOM_REGISTRY_ID, contract.address, filter.address, { from: nonwhitelisted }), "DR: not authorised"
+      );
     });
   });
 });
