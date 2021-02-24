@@ -61,7 +61,24 @@ contract("ENS contracts", (accounts) => {
     it("should register an ENS name", async () => {
       const label = "wallet";
       const labelNode = ethers.utils.namehash(`${label}.${subnameWallet}.${root}`);
-      await ensManager.register(label, owner);
+      await ensManager.register(label, owner, "0x");
+
+      const recordExists = await ensRegistry.recordExists(labelNode);
+      assert.isTrue(recordExists);
+      const nodeOwner = await ensRegistry.owner(labelNode);
+      assert.equal(nodeOwner, owner);
+      const res = await ensRegistry.resolver(labelNode);
+      assert.equal(res, ensResolver.address);
+    });
+
+    it.skip("should register an ENS name with manager signature", async () => {
+      const label = "wallet";
+      const labelNode = ethers.utils.namehash(`${label}.${subnameWallet}.${root}`);
+
+      const hash = ethers.utils.keccak256(owner, label);
+      const managerSig = await utilities.signMessage(hash, infrastructure);
+
+      await ensManager.register(label, owner, managerSig, { from: anonmanager });
 
       const recordExists = await ensRegistry.recordExists(labelNode);
       assert.isTrue(recordExists);
@@ -80,7 +97,7 @@ contract("ENS contracts", (accounts) => {
       assert.isTrue(available);
 
       // then we register it
-      await ensManager.register(label, owner);
+      await ensManager.register(label, owner, "0x");
 
       const nodeOwner = await ensRegistry.owner(labelNode);
       assert.equal(nodeOwner, owner);
@@ -94,14 +111,14 @@ contract("ENS contracts", (accounts) => {
       const label = "wallet";
       const labelNode = ethers.utils.namehash(`${label}.${subnameWallet}.${root}`);
       await ensManager.addManager(amanager);
-      await ensManager.register(label, owner, { from: amanager });
+      await ensManager.register(label, owner, "0x", { from: amanager });
       const nodeOwner = await ensRegistry.owner(labelNode);
       assert.equal(nodeOwner, owner, "new manager should have registered the ens name");
     });
 
     it("should fail to register an ENS name when the caller is not a manager", async () => {
       const label = "wallet";
-      await truffleAssert.reverts(ensManager.register(label, owner, { from: anonmanager }), "M: Must be manager");
+      await truffleAssert.reverts(ensManager.register(label, owner, "0x", { from: anonmanager }), "AEM: user is not manager");
     });
 
     it("should be able to change the root node owner", async () => {
@@ -155,7 +172,7 @@ contract("ENS contracts", (accounts) => {
 
     it("should resolve a name", async () => {
       const label = "wallet";
-      await ensManager.register(label, owner);
+      await ensManager.register(label, owner, "0x");
 
       const node = await ensReverse.node(owner);
       const name = await ensResolver.name(node);
